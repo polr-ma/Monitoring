@@ -1,0 +1,12 @@
+﻿.venv/
+__pycache__/
+*.pyc
+tmp/
+screenshots/
+违规记录_*.docx
+ASR审计_*.docx
+debug_*.log
+audio_diag_*.jsonl
+分发包.zip
+models/
+*.jpg
