@@ -1,4 +1,4 @@
-"""集中配置文件"""
+"""集中配置文件 - 最终版（向后兼容）"""
 
 # ── 违禁词列表 ──────────────────────────────────────────
 FORBIDDEN_WORDS = [
@@ -21,13 +21,13 @@ FORBIDDEN_WORDS = [
 
 # ── 行为检测阈值 ──────────────────────────────────────────
 POSE_THRESHOLDS = {
-    'absent_frames': 30,        # 连续多少帧无人 → 离开工位
-    'yaw_threshold': 30.0,      # yaw 绝对值 > 此值 → 东张西望
-    'look_around_seconds': 2.0, # 东张西望持续时间
-    'pitch_threshold': 50.0,    # pitch > 此值 → 低头
-    'head_down_seconds': 5.0,   # 低头持续时间
-    'ear_threshold': 0.2,       # EAR < 此值 → 闭眼
-    'sleeping_seconds': 3.0,    # 闭眼持续时间
+    'absent_frames': 30,
+    'yaw_threshold': 30.0,
+    'look_around_seconds': 2.0,
+    'pitch_threshold': 50.0,
+    'head_down_seconds': 5.0,
+    'ear_threshold': 0.2,
+    'sleeping_seconds': 3.0,
 }
 
 # ── 摄像头配置 ──────────────────────────────────────────
@@ -36,17 +36,57 @@ CAMERA_CONFIG = {
     'width': 640,
     'height': 480,
     'fps': 30,
+    'backend': 'CAP_DSHOW',   # Windows 推荐；Linux 可设为 'V4L2' 或 None
 }
 
-# ── 音频配置 ──────────────────────────────────────────
-AUDIO_CONFIG = {
+# ── 音频采集配置 ────────────────────────────────────────
+AUDIO_CAPTURE_CONFIG = {
     'sample_rate': 16000,
-    'chunk_size': 1600,        # 从3200降到1600 (100ms)，更细致的检测
-    'device_index': None,      # None = 系统默认麦克风
-    'gain': 1.2,               # 降低增益避免失真，干净信号更有利于 ASR
+    'channels': 1,
+    'chunk_size': 1600,        # 每次回调帧数（100ms @ 16kHz）
+    'device_index': None,
+    'queue_size': 200,
+    'dtype': 'int16',
+    'read_timeout': 0.2,       # AudioEngine 读取队列的超时（秒）
 }
 
-# ── 告警配置 ──────────────────────────────────────────
+# ── 音频缓冲配置 ────────────────────────────────────────
+AUDIO_BUFFER_CONFIG = {
+    'target_duration': 4.0,
+    'overlap_duration': 0.5,
+    'flush_on_stop': True,     # 停止时是否强制刷新剩余数据
+}
+
+# ── 音频处理器配置 ───────────────────────────────────────
+AUDIO_PROCESSOR_CONFIG = {
+    'min_audio_ms': 300,       # 最短识别长度（毫秒）
+    'energy_threshold': 0.002, # RMS 能量门限（归一化后）
+    'language': 'auto',
+    'use_itn': True,           # 逆文本正则化（数字转阿拉伯数字）
+}
+
+# ── SenseVoice 语音识别配置 ───────────────────────────────
+SENSEVOICE_CONFIG = {
+    'model': 'iic/SenseVoiceSmall',
+    'vad_model': 'iic/speech_fsmn_vad_zh-cn-16k-common-pytorch',
+    'vad_max_segment': 30000,      # 毫秒，对应 vad_kwargs 的 max_single_segment_time
+    'device': 'cpu',               # 推理设备，GPU 可设为 'cuda:0'
+    'disable_update': True,        # 禁止自动联网检查更新
+}
+
+# ── 降噪配置 ──────────────────────────────────────────
+NOISE_REDUCTION_CONFIG = {
+    'enabled': True,               # 总开关
+    'noise_reduce_db': 6,
+    'n_fft': 512,
+    'hop_length': 256,
+    'noise_smooth_frames': 5,
+    'learning_rate': 0.02,
+    'enable_wiener': True,
+    'enable_spectral_sub': True,
+}
+
+# ── 告警冷却时间 ──────────────────────────────────────────
 ALERT_COOLDOWN = {
     'leave_post': 10.0,
     'return_post': 5.0,
@@ -56,28 +96,33 @@ ALERT_COOLDOWN = {
     'forbidden_word': 5.0,
 }
 
-# ── SenseVoice 语音识别配置 ───────────────────────────────
-# 使用阿里达摩院 FunASR SenseVoiceSmall，免费开源，中文识别准确率远超 Vosk
-# 模型会自动从 ModelScope 下载到本地缓存
-SENSEVOICE_CONFIG = {
-    'model': 'iic/SenseVoiceSmall',
-    'vad_model': 'iic/speech_fsmn_vad_zh-cn-16k-common-pytorch',
-    'vad_max_segment': 30000,   # 最大单段 30s，让内部 VAD 有足够上下文
-    'chunk_duration': 5.0,      # 攒更长再送，避免语音被切碎
-}
-
 # ── 截图配置 ──────────────────────────────────────────
-SCREENSHOT_DIR = 'screenshots'  # 违规截图保存目录
-SCREENSHOT_WIDTH = 320           # 嵌入 Word 的截图宽度 (像素)
-
-# ── 降噪配置 ──────────────────────────────────────────
-# 谱减法 + Wiener 滤波，对嘈杂环境下的语音增强效果明显
-# 耗时约 1-10ms/帧，不影响实时性
-NOISE_REDUCTION_CONFIG = {
-    'enabled': True,             # 是否启用降噪
-    'noise_reduce_db': 6,        # 目标降噪量 (dB)，安静环境下调低避免过度处理
-    'n_fft': 512,                # FFT 点数 (32ms @ 16kHz)
-    'hop_length': 256,           # 帧移 (50% overlap)
-    'noise_smooth_frames': 5,    # 噪声平滑帧数
-    'learning_rate': 0.02,       # 噪声估计 EMA 学习率
+SCREENSHOT_CONFIG = {
+    'dir': 'screenshots',
+    'width': 320,
 }
+
+
+# ======================================================================
+# 向后兼容层：导出旧版本直接使用的变量，避免立即修改所有模块
+# ======================================================================
+
+# 截图（旧代码可能直接 import SCREENSHOT_DIR / SCREENSHOT_WIDTH）
+SCREENSHOT_DIR = SCREENSHOT_CONFIG['dir']
+SCREENSHOT_WIDTH = SCREENSHOT_CONFIG['width']
+
+# 旧版通用音频配置（AUDIO_CONFIG）：某些模块可能还在使用
+AUDIO_CONFIG = {
+    'sample_rate': AUDIO_CAPTURE_CONFIG['sample_rate'],
+    'chunk_size': AUDIO_CAPTURE_CONFIG['chunk_size'],
+    'device_index': AUDIO_CAPTURE_CONFIG['device_index'],
+    'gain': 1.2,                      # 保留旧版增益值，尽管新架构不再使用
+}
+
+# 旧版 SenseVoice 配置可能被直接引用，我们补充可能缺失的字段
+# 注意：chunk_duration 已被废弃，但为了兼容，提供一个默认值
+if 'chunk_duration' not in SENSEVOICE_CONFIG:
+    SENSEVOICE_CONFIG['chunk_duration'] = 10.0  # 旧代码可能用到的字段
+
+# 如果有其他模块需要旧的结构，可以在这里继续添加
+# 例如：旧版降噪配置可能直接使用 NOISE_REDUCTION_CONFIG 字典，无需更改

@@ -796,7 +796,7 @@ import threading
 import time
 
 from camera_engine import CameraEngine
-from audio_engine import AudioEngine
+from audio.audio_engine import AudioEngine
 from violation_recorder import ViolationRecorder
 from alert_player import AlertPlayer
 from config import ALERT_COOLDOWN

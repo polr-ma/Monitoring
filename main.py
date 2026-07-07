@@ -1,4 +1,4 @@
-"""直播间人员工作状态监控系统 — 主入口"""
+"""直播间人员工作状态监控系统 — 主入口（适配重构版 AudioEngine）"""
 
 import logging
 import os
@@ -23,13 +23,12 @@ os.environ.setdefault('MPLCONFIGDIR', os.path.join(_PROJECT_DIR, 'tmp'))
 os.makedirs(os.environ['MPLCONFIGDIR'], exist_ok=True)
 
 from camera_engine import CameraEngine
-from audio_engine import AudioEngine
+from audio.audio_engine import AudioEngine
 from violation_recorder import ViolationRecorder
 from alert_player import AlertPlayer
 from audit_logger import ASRAuditLogger
-from noise_reducer import NoiseReducer
-from obs_helper import OBSAudioHelper
-from config import ALERT_COOLDOWN, AUDIO_CONFIG, NOISE_REDUCTION_CONFIG
+# 不再需要手动导入 NoiseReducer 和相关配置，AudioEngine 内部自管理
+from config import ALERT_COOLDOWN
 
 
 def setup_logging(log_dir: str = '.'):
@@ -55,7 +54,7 @@ def setup_logging(log_dir: str = '.'):
     ch.setFormatter(logging.Formatter('[%(name)-8s] %(levelname)-7s %(message)s'))
     root.addHandler(ch)
 
-    # audio logger 单独设低级别，方便看到语音诊断
+    # audio logger 单独设低级别
     logging.getLogger('audio').setLevel(logging.DEBUG)
     logging.getLogger('audio.denoise').setLevel(logging.DEBUG)
     logging.getLogger('camera').setLevel(logging.DEBUG)
@@ -73,12 +72,16 @@ TYPE_ICONS = {
 }
 
 
-def print_banner(recorder, log_file):
+def print_banner(recorder, log_file, asr_audit_file, noise_info):
     bar = '─' * 60
     print(f'\n{bar}')
     print(f'  🎥 直播监控系统    文档: {os.path.basename(recorder.filepath)}')
     print(f'  📋 调试日志: {os.path.basename(log_file)}')
+    print(f'  📝 ASR审计: {os.path.basename(asr_audit_file)}')
+    print(f'  🔇 {noise_info}')
     print(f'{bar}')
+    print('  按 Ctrl+C 停止   预览窗口按 Q 可关闭')
+    print('')
 
 
 def main():
@@ -95,34 +98,25 @@ def main():
     camera_engine = CameraEngine(event_queue, stop_event, show_preview=True)
     audio_engine = AudioEngine(event_queue, stop_event, output_dir='.')
 
-    # ── 降噪器 ─────────────────────────────
-    noise_reducer = NoiseReducer(
-        sample_rate=AUDIO_CONFIG['sample_rate'],
-        n_fft=NOISE_REDUCTION_CONFIG['n_fft'],
-        hop_length=NOISE_REDUCTION_CONFIG['hop_length'],
-        noise_reduce_db=NOISE_REDUCTION_CONFIG['noise_reduce_db'],
-        noise_smooth_frames=NOISE_REDUCTION_CONFIG['noise_smooth_frames'],
-        learning_rate=NOISE_REDUCTION_CONFIG['learning_rate'],
-        enabled=NOISE_REDUCTION_CONFIG['enabled'],
-    )
-    audio_engine.set_noise_reducer(noise_reducer)
+    # ── 不再需要手动创建和注入 NoiseReducer ──
+    # AudioEngine 会根据 config 自行创建 Processor 并包含降噪器
 
-    # ── ASR 审计日志 ─────────────────────────
+    # ── ASR 审计日志 ──
     asr_audit_logger = ASRAuditLogger(output_dir='.')
     audio_engine.set_audit_callback(asr_audit_logger.add_entry)
+
+    # 获取降噪状态用于显示（从配置读取）
+    from config import NOISE_REDUCTION_CONFIG
+    noise_enabled = NOISE_REDUCTION_CONFIG.get('enabled', False)
+    noise_db = NOISE_REDUCTION_CONFIG.get('noise_reduce_db', 0)
+    noise_info = f'降噪: {"开" if noise_enabled else "关"} ({noise_db}dB)'
 
     recent_violations = []
 
     camera_engine.start()
     audio_engine.start()
 
-    print_banner(recorder, log_file)
-    print(f'  📝 ASR审计: {os.path.basename(asr_audit_logger.filepath)}')
-    nr_label = f'降噪: {"开" if noise_reducer.enabled else "关"} ({NOISE_REDUCTION_CONFIG["noise_reduce_db"]}dB)'
-    print(f'  🔇 {nr_label}')
-    print(f'{"─" * 60}')
-    print('  按 Ctrl+C 停止   预览窗口按 Q 可关闭')
-    print('')
+    print_banner(recorder, log_file, asr_audit_logger.filepath, noise_info)
 
     def signal_handler(sig, frame):
         print('\n⚠ 正在停止...')
@@ -130,7 +124,6 @@ def main():
 
     signal.signal(signal.SIGINT, signal_handler)
 
-    # 上次打印状态行的时间
     last_status_print = 0
 
     try:
@@ -154,13 +147,13 @@ def main():
             except queue.Empty:
                 pass
 
-            # 摄像头状态
+            # 状态显示
             cam = camera_engine.get_status()
             audio = audio_engine.get_status()
 
-            # 状态行（1秒刷新一次）
             now = time.time()
             if now - last_status_print >= 1.0:
+                # 摄像头状态行
                 status_line = f'\r  FPS:{cam["fps"]:.1f}  '
                 if cam['is_absent']:
                     status_line += '| ⚠离开 '
@@ -176,14 +169,16 @@ def main():
                 status_line += (f'| Y:{cam["yaw"]:.0f} '
                                 f'P:{cam["pitch"]:.0f} E:{cam["ear"]:.2f}')
 
-                if audio.get('sensevoice_available'):
-                    buf = audio.get('buffer_chunks', 0)
-                    results = audio.get('last_result_count', 0)
-                    peak = audio.get('audio_peak', 0)
-                    nr_db = audio.get('denoise_reduction_db', 0)
-                    status_line += f' | 🎤缓冲:{buf} 结果:{results} 电平:{peak:.0f} NR:{nr_db:.0f}dB'
+                # 音频状态行（使用新字段）
+                if audio.get('model_loaded'):
+                    cap_queue = audio.get('capture_queue', 0)
+                    buf_samples = audio.get('buffer_samples', 0)
+                    buf_dur = audio.get('buffer_duration', 0)
+                    status_line += (f' | 🎤Q:{cap_queue} '
+                                    f'Buf:{buf_samples}({buf_dur:.1f}s) '
+                                    f'Ready:{audio.get("buffer_ready", False)}')
                 else:
-                    status_line += ' | 🎤不可用'
+                    status_line += ' | 🎤模型加载中...'
 
                 print(status_line, end='', flush=True)
                 last_status_print = now
