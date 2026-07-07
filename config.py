@@ -43,7 +43,7 @@ AUDIO_CONFIG = {
     'sample_rate': 16000,
     'chunk_size': 1600,        # 从3200降到1600 (100ms)，更细致的检测
     'device_index': None,      # None = 系统默认麦克风
-    'gain': 1.8,               # 从5.0降到1.5，避免削波失真
+    'gain': 1.2,               # 降低增益避免失真，干净信号更有利于 ASR
 }
 
 # ── 告警配置 ──────────────────────────────────────────
@@ -62,8 +62,8 @@ ALERT_COOLDOWN = {
 SENSEVOICE_CONFIG = {
     'model': 'iic/SenseVoiceSmall',
     'vad_model': 'iic/speech_fsmn_vad_zh-cn-16k-common-pytorch',
-    'vad_max_segment': 8000,     # 从 15000 改成 30000
-    'chunk_duration': 2.2,        # 从 2.0 改成 4.0，攒更长再送
+    'vad_max_segment': 30000,   # 最大单段 30s，让内部 VAD 有足够上下文
+    'chunk_duration': 5.0,      # 攒更长再送，避免语音被切碎
 }
 
 # ── 截图配置 ──────────────────────────────────────────
@@ -75,12 +75,9 @@ SCREENSHOT_WIDTH = 320           # 嵌入 Word 的截图宽度 (像素)
 # 耗时约 1-10ms/帧，不影响实时性
 NOISE_REDUCTION_CONFIG = {
     'enabled': True,             # 是否启用降噪
-    'noise_reduce_db': 8,     # 目标降噪量 (dB)，6-18 之间调节
+    'noise_reduce_db': 6,        # 目标降噪量 (dB)，安静环境下调低避免过度处理
     'n_fft': 512,                # FFT 点数 (32ms @ 16kHz)
     'hop_length': 256,           # 帧移 (50% overlap)
     'noise_smooth_frames': 5,    # 噪声平滑帧数
     'learning_rate': 0.02,       # 噪声估计 EMA 学习率
 }
-
-
-

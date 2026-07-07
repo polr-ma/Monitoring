@@ -139,7 +139,7 @@ class AudioEngine(threading.Thread):
         _diag('ready', sr=self._sr, buf=self._chunk_dur, nr=nr_s, nf_init=self._noise_floor)
 
     def _listen_loop(self):
-        sil = 0; max_sil = 12; last_diag = time.time()
+        sil = 0; max_sil = 30; last_diag = time.time()
         while not self._stop_event.is_set():
             try:
                 chunk = sd.rec(self._cs, samplerate=self._sr, channels=1, dtype='int16',
@@ -160,7 +160,7 @@ class AudioEngine(threading.Thread):
                 if pk < self._noise_floor * 1.3:
                     self._noise_floor = self._noise_alpha * self._noise_floor + (1 - self._noise_alpha) * pk
 
-                gate = max(150.0, self._noise_floor * 3.0)
+                gate = max(200.0, self._noise_floor * 2.0)
 
                 if time.time() - last_diag > 10:
                     _diag('hb', ch=self._total_chunks, pr=self._processed_audios,
@@ -179,13 +179,13 @@ class AudioEngine(threading.Thread):
                 if sil > 0: _diag('spk', pk=round(pk, 0), gate=round(gate, 0), sil=sil)
                 sil = 0
 
-                # AGC
+                # AGC: gentle gain with hard clip, no tanh distortion
                 self._agc_peak = 0.95 * self._agc_peak + 0.05 * pk
                 tgt = max(2000.0, self._agc_peak * 2)
-                dg = min(self._gain * 3, tgt / max(pk, 1))
-                dg = max(0.8, min(8.0, dg))
+                dg = min(self._gain * 2, tgt / max(pk, 1))
+                dg = max(0.8, min(4.0, dg))
                 c = c * dg
-                c = (np.tanh(c / 28000.0) * 28000.0).astype(np.int16)
+                c = np.clip(c, -30000, 30000).astype(np.int16)
 
                 if self._buffer_start_time is None: self._buffer_start_time = time.time()
                 self._audio_buffer.append(c)
@@ -213,15 +213,15 @@ class AudioEngine(threading.Thread):
         rms = float(np.sqrt(np.mean(audio.astype(np.float64) ** 2)))
         _diag('buf', n=bl, ms=round(dur * 1000, 0), pk=round(pk, 0), rms=round(rms, 0))
 
-        # overlap: keep last 1.5s
-        on = int(1.5 * self._sr)
+        # overlap: keep last 2.5s to avoid splitting speech mid-sentence
+        on = int(2.5 * self._sr)
         self._audio_buffer = [audio[-on:].astype(np.int16)] if len(audio) > on else []
         self._buffer_start_time = None
 
         anom = []
 
-        if len(audio) < self._sr * 0.5:
-            anom.append('buf<0.5s')
+        if len(audio) < self._sr * 0.3:
+            anom.append('buf<0.3s')
             self._emit('', dur, rms, bl, '', ','.join(anom))
             return
 
